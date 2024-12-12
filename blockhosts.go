@@ -35,6 +35,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -44,6 +46,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"strings"
 
 	"github.com/coreos/go-iptables/iptables"
 )
@@ -56,7 +59,19 @@ var (
 	chainName   string
 	targetChain string
 	sshLog      string
+	bhc         *BHconfig
 )
+
+type BHconfig struct {
+	LastLineRead int `json:"last_line,omitempty"`
+	IpList       []IPAddresses
+	sourceFile   string
+}
+
+type IPAddresses struct {
+	Ip    string `json:"ip"`
+	Count int    `json:"count"`
+}
 
 func init() {
 	flag.StringVar(&targetChain, "target", "DROP", "target chain for matching entries")
@@ -82,15 +97,49 @@ func main() {
 		log.SetOutput(lf)
 	}
 
-	ips, err := SshAuthCheck(sshLog)
+	log.Println("-> [o] Loading config")
+	bhconfig, err := LoadConfig()
+	if err != nil {
+		log.Println("-> [X] config error:", err.Error())
+		panic(err.Error())
+	} else {
+		bhc = bhconfig
+	}
+
+	if bhc.LastLineRead > 0 {
+		log.Println("last line read:", bhc.LastLineRead)
+	} else {
+		log.Println("unknown last line:", bhc.LastLineRead)
+		bhc.LastLineRead = 0
+		log.Println("last line now:", bhc.LastLineRead)
+	}
+
+	log.Println("current ip count:")
+	PrintIPCount(bhc.IpList)
+
+	var ips []string
+	ips, bhc.LastLineRead, err = SshAuthCheck(sshLog)
 	if err != nil {
 		log.Println("error accessing log:", err)
 		runtime.Goexit()
 	}
 
 	if ips == nil {
-		log.Println("no ips found")
-		runtime.Goexit()
+		log.Println("no new ips found. lines read:", bhc.LastLineRead)
+		if err := bhc.Update(); err != nil {
+			log.Fatal(err)
+		}
+
+		os.Exit(0)
+	}
+
+	for _, t := range bhc.IpList {
+		ipaddress := t.Ip
+		count := t.Count
+
+		for i := 0; i <= count; i++ {
+			ips = append(ips, ipaddress)
+		}
 	}
 
 	log.Println("ips found. blocking ips with 3 or more attempts")
@@ -99,13 +148,27 @@ func main() {
 		freq[string(ip)] = freq[string(ip)] + 1
 	}
 
+	var updatedLlist []IPAddresses
 	for address, count := range freq {
+		parseList := IPAddresses{
+			Ip:    address,
+			Count: count,
+		}
+
+		updatedLlist = append(updatedLlist, parseList)
 		if count > 2 {
 			log.Println("blocking", address, "with count of", count)
 			iptableHandle("ipv4", "add", address)
 		} else {
 			log.Println("not blocking", address, "with count of", count)
 		}
+	}
+
+	log.Println("updated count:")
+	bhc.IpList = updatedLlist
+	PrintIPCount(bhc.IpList)
+	if err := bhc.Update(); err != nil {
+		log.Fatal(err)
 	}
 }
 
@@ -175,40 +238,57 @@ func initializeIPTables(ipt *iptables.IPTables) (string, error) {
 	return chainName + " created", nil
 }
 
-func SshAuthCheck(logfile string) ([]string, error) {
+func SshAuthCheck(logfile string) ([]string, int, error) {
 	var addresses []string
+	var matchRules []string
+	matchRules = append(matchRules, `Connection closed by\D+([0-9]{0,3}\.){3}[0-9]{0,3}`)
+	matchRules = append(matchRules, `Received disconnect from\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\:\s\s\[preauth\]`)
+	matchString := strings.Join(matchRules, "|")
+
 	file, err := os.Open(logfile)
 	if err != nil {
-		return addresses, err
+		log.Println("[ERR]", err.Error())
+		return addresses, 0, err
 	}
 
 	defer file.Close()
 	reader := bufio.NewReader(file)
+	linecount := 0
+	var read = false
+	reader = bufio.NewReader(file)
+	log.Println("parse log")
 	for {
 		line, err := reader.ReadSlice('\n')
 		if err == io.EOF {
+			linecount++
+			if !read {
+				bhc.LastLineRead = 0
+			}
+
 			break
 		} else if err != nil {
-			return addresses, fmt.Errorf("failed to read file %s: %v\n", logfile, err)
+			return addresses, 0, fmt.Errorf("failed to read file %s: %v\n", logfile, err)
 		}
 
-		// parse Uid=<num>
-		re := regexp.MustCompile(`Connection closed by\D+([0-9]{0,3}\.){3}[0-9]{0,3}`)
-		re2 := regexp.MustCompile(`([0-9]{0,3}\.){3}[0-9]{0,3}`)
-		token := re.FindString(string(line))
-		if token == "" {
-			continue
-		} else {
-			token2 := re2.FindString(token)
-			if token2 == "" {
-				continue
-			} else {
-				addresses = append(addresses, token2)
+		if linecount >= bhc.LastLineRead {
+			read = true
+			log.Println("reading line", linecount)
+			re := regexp.MustCompile(matchString)
+			reip := regexp.MustCompile(`([0-9]{0,3}\.){3}[0-9]{0,3}`)
+			token := re.FindString(string(line))
+			if token != "" {
+				ipaddress := reip.FindString(token)
+				if ipaddress != "" {
+					addresses = append(addresses, ipaddress)
+				}
 			}
 		}
+
+		linecount++
 	}
 
-	return addresses, nil
+	log.Println("done")
+	return addresses, linecount, nil
 }
 
 func iptableHandle(proto string, task string, ipvar string) (string, error) {
@@ -285,4 +365,90 @@ func iptableHandle(proto string, task string, ipvar string) (string, error) {
 		log.Println("iptableHandler: unknown task")
 		return "", errors.New("unknown task")
 	}
+}
+
+// LoadConfig attempts to load the configuration file from various locations
+func LoadConfig() (*BHconfig, error) {
+	var fileLocations []string
+	fileName := "bhconfig.json"
+
+	// Add standard static locations
+	fileLocations = append(fileLocations,
+		fileName,
+		"/usr/local/bin/"+fileName,
+		"/etc/blockhosts/"+fileName,
+		"/var/lib/blockhosts/"+fileName,
+		"/usr/local/bin/blockhosts/"+fileName,
+		"/usr/local/blockhosts/"+fileName,
+		"/etc/blockhosts/"+fileName,
+	)
+
+	for _, loc := range fileLocations {
+		f, err := os.Open(loc)
+		if err != nil {
+			log.Println("-> [-] [LoadConfig] config not found in", loc)
+			continue
+		}
+
+		log.Println("-> [-] [LoadConfig] trying config located in", loc)
+		defer f.Close()
+		cfg := new(BHconfig)
+		if err := json.NewDecoder(f).Decode(cfg); err != nil {
+			log.Println("-> [x] [LoadConfig] error reading:", loc, err)
+			return nil, fmt.Errorf("[LoadConfig] failed to read configuration from %s: %w", loc, err)
+		}
+
+		// Store the location of the config file so that we can update it later
+		cfg.sourceFile = loc
+		return cfg, nil
+	}
+
+	return nil, errors.New("[LoadConfig] failed to locate configuration file " + fileName)
+}
+
+func PrintIPCount(ips []IPAddresses) {
+	log.Println("---------")
+	for ip, count := range ips {
+		log.Println(ip, ":", count)
+	}
+
+	log.Println("---------")
+}
+
+func CountLines(r io.Reader) (int, error) {
+
+	var count int
+	var read int
+	var err error
+	var target []byte = []byte("\n")
+
+	buffer := make([]byte, 32*1024)
+
+	for {
+		read, err = r.Read(buffer)
+		if err != nil {
+			break
+		}
+
+		count += bytes.Count(buffer[:read], target)
+	}
+
+	if err == io.EOF {
+		return count, nil
+	}
+
+	return count, err
+}
+
+func (cfg *BHconfig) Update() error {
+	f, err := os.Create(cfg.sourceFile)
+	if err != nil {
+		return fmt.Errorf("failed to open configuration file for writing: %w", err)
+	}
+
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "\t")
+	return enc.Encode(cfg)
 }
