@@ -59,6 +59,7 @@ var (
 	chainName   string
 	targetChain string
 	sshLog      string
+	extraLog    bool
 	bhc         *BHconfig
 )
 
@@ -78,6 +79,7 @@ func init() {
 	flag.StringVar(&chainName, "chain", "APIBANLOCAL", "chain name for entries")
 	flag.StringVar(&logFile, "log", "/var/log/blockhosts.log", "location of log file or - for stdout")
 	flag.StringVar(&sshLog, "ssh", "/var/log/auth.log", "location of ssh log")
+	flag.BoolVar(&extraLog, "xtra", false, "log extra")
 
 }
 
@@ -114,8 +116,10 @@ func main() {
 		log.Println("last line now:", bhc.LastLineRead)
 	}
 
-	log.Println("current ip count:")
-	PrintIPCount(bhc.IpList)
+	if extraLog {
+		log.Println("current ip count:")
+		PrintIPCount(bhc.IpList)
+	}
 
 	var ips []string
 	ips, bhc.LastLineRead, err = SshAuthCheck(sshLog)
@@ -148,6 +152,7 @@ func main() {
 		freq[string(ip)] = freq[string(ip)] + 1
 	}
 
+	blockedcount := 0
 	var updatedLlist []IPAddresses
 	for address, count := range freq {
 		parseList := IPAddresses{
@@ -157,19 +162,34 @@ func main() {
 
 		updatedLlist = append(updatedLlist, parseList)
 		if count > 2 {
-			log.Println("blocking", address, "with count of", count)
+			if extraLog {
+				log.Println("blocking", address, "with count of", count)
+			}
+
 			iptableHandle("ipv4", "add", address)
+			blockedcount++
 		} else {
-			log.Println("not blocking", address, "with count of", count)
+			if extraLog {
+				log.Println("not blocking", address, "with count of", count)
+			}
 		}
 	}
 
-	log.Println("updated count:")
+	log.Println("blocking:", blockedcount, "addresses")
+	if extraLog {
+		log.Println("updated count:")
+	}
+
 	bhc.IpList = updatedLlist
-	PrintIPCount(bhc.IpList)
+	if extraLog {
+		PrintIPCount(bhc.IpList)
+	}
+
 	if err := bhc.Update(); err != nil {
 		log.Fatal(err)
 	}
+
+	log.Println("Done. New line marker:", bhc.LastLineRead)
 }
 
 func checkIPAddress(ip string) bool {
@@ -243,6 +263,9 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 	var matchRules []string
 	matchRules = append(matchRules, `Connection closed by\D+([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Received disconnect from\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\:\s\s\[preauth\]`)
+	matchRules = append(matchRules, `authentication failure(.*)rhost\=([0-9]{0,3}\.){3}[0-9]{0,3}`)
+	matchRules = append(matchRules, `Failed password for(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
+	matchRules = append(matchRules, `Invalid user(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchString := strings.Join(matchRules, "|")
 
 	file, err := os.Open(logfile)
@@ -272,7 +295,10 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 
 		if linecount >= bhc.LastLineRead {
 			read = true
-			log.Println("reading line", linecount)
+			if extraLog {
+				log.Println("reading line", linecount)
+			}
+
 			re := regexp.MustCompile(matchString)
 			reip := regexp.MustCompile(`([0-9]{0,3}\.){3}[0-9]{0,3}`)
 			token := re.FindString(string(line))
@@ -292,7 +318,9 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 }
 
 func iptableHandle(proto string, task string, ipvar string) (string, error) {
-	log.Println("iptableHandle:", proto, task, ipvar)
+	if extraLog {
+		log.Println("iptableHandle:", proto, task, ipvar)
+	}
 
 	var ipProto iptables.Protocol
 	switch proto {
@@ -335,7 +363,9 @@ func iptableHandle(proto string, task string, ipvar string) (string, error) {
 	case "flush":
 		err = ipt.ClearChain("filter", chainName)
 		if err != nil {
-			log.Println("iptableHandler:", proto, err)
+			if extraLog {
+				log.Println("iptableHandler:", proto, err)
+			}
 			return "", err
 		} else {
 			return "flushed", nil
