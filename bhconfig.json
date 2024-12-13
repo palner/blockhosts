@@ -1,1 +1,4 @@
-{"last_line": 0}
+{
+    "last_line": 0,
+    "Allowed": [{"cidr":"192.168.0.0/16"}]
+}

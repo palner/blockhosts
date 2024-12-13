@@ -48,7 +48,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/coreos/go-iptables/iptables"
+	"blockhosts/bhipt"
 )
 
 type Re map[string]*regexp.Regexp
@@ -65,13 +65,23 @@ var (
 
 type BHconfig struct {
 	LastLineRead int `json:"last_line,omitempty"`
-	IpList       []IPAddresses
+	Allowed      []IPNet
+	Blocked      []IPAddresses
+	Watching     []IPAddressesCount
 	sourceFile   string
 }
 
-type IPAddresses struct {
+type IPAddressesCount struct {
 	Ip    string `json:"ip"`
 	Count int    `json:"count"`
+}
+
+type IPAddresses struct {
+	Ip string `json:"ip"`
+}
+
+type IPNet struct {
+	Cidr string `json:"cidr"`
 }
 
 func init() {
@@ -118,7 +128,27 @@ func main() {
 
 	if extraLog {
 		log.Println("current ip count:")
-		PrintIPCount(bhc.IpList)
+		PrintIPCount(bhc.Watching)
+	}
+
+	// get current blocked
+	blocked, _ := bhipt.GetIPaddressesFromChainIPv4(chainName)
+	if blocked == nil {
+		log.Println("no blocks in", chainName)
+		log.Println("nothing blocking in", chainName, "checking config")
+		if bhc.Blocked == nil {
+			log.Println("no blocks in cfg")
+		} else {
+			log.Println("add cfg blocks to iptables")
+			for _, v := range bhc.Blocked {
+				bhipt.IptableHandle("ipv4", "add", v.Ip, extraLog, chainName, targetChain)
+				blocked = append(blocked, v.Ip)
+			}
+		}
+	}
+
+	if extraLog {
+		log.Println(blocked)
 	}
 
 	var ips []string
@@ -130,6 +160,7 @@ func main() {
 
 	if ips == nil {
 		log.Println("no new ips found. lines read:", bhc.LastLineRead)
+		bhc.Blocked = updateBlocklist(blocked)
 		if err := bhc.Update(); err != nil {
 			log.Fatal(err)
 		}
@@ -137,7 +168,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	for _, t := range bhc.IpList {
+	for _, t := range bhc.Watching {
 		ipaddress := t.Ip
 		count := t.Count
 
@@ -147,26 +178,41 @@ func main() {
 	}
 
 	log.Println("ips found. blocking ips with 3 or more attempts")
+
 	freq := make(map[string]int)
 	for _, ip := range ips {
 		freq[string(ip)] = freq[string(ip)] + 1
 	}
 
 	blockedcount := 0
-	var updatedLlist []IPAddresses
+	var updatedLlist []IPAddressesCount
 	for address, count := range freq {
-		parseList := IPAddresses{
+		parseList := IPAddressesCount{
 			Ip:    address,
 			Count: count,
 		}
 
 		updatedLlist = append(updatedLlist, parseList)
 		if count > 2 {
-			if extraLog {
-				log.Println("blocking", address, "with count of", count)
+			log.Println("blocking", address, "with count of", count)
+			if bhipt.Contains(blocked, address) {
+				log.Println(address, "already blocked")
+			} else {
+				if bhc.Allowed == nil {
+					bhipt.IptableHandle("ipv4", "add", address, extraLog, chainName, targetChain)
+					blocked = append(blocked, address)
+				} else {
+					for _, v := range bhc.Allowed {
+						if bhipt.ContainsIP(v.Cidr, address) {
+							log.Println(address, "allowed in", v.Cidr, " - not blocking")
+						} else {
+							bhipt.IptableHandle("ipv4", "add", address, extraLog, chainName, targetChain)
+							blocked = append(blocked, address)
+						}
+					}
+				}
 			}
 
-			iptableHandle("ipv4", "add", address)
 			blockedcount++
 		} else {
 			if extraLog {
@@ -176,13 +222,17 @@ func main() {
 	}
 
 	log.Println("blocking:", blockedcount, "addresses")
+
+	bhc.Blocked = updateBlocklist(blocked)
 	if extraLog {
-		log.Println("updated count:")
+		log.Println("updated blocklist")
+		PrintIP(bhc.Blocked)
 	}
 
-	bhc.IpList = updatedLlist
+	bhc.Watching = updatedLlist
 	if extraLog {
-		PrintIPCount(bhc.IpList)
+		log.Println("updated watchlist")
+		PrintIPCount(bhc.Watching)
 	}
 
 	if err := bhc.Update(); err != nil {
@@ -192,70 +242,25 @@ func main() {
 	log.Println("Done. New line marker:", bhc.LastLineRead)
 }
 
+func updateBlocklist(list []string) []IPAddresses {
+	var updatedBlocklist []IPAddresses
+	for _, v := range list {
+		parseList := IPAddresses{
+			Ip: v,
+		}
+
+		updatedBlocklist = append(updatedBlocklist, parseList)
+	}
+
+	return updatedBlocklist
+}
+
 func checkIPAddress(ip string) bool {
 	if net.ParseIP(ip) == nil {
 		return false
 	} else {
 		return true
 	}
-}
-
-// Function to see if string within string
-func contains(list []string, value string) bool {
-	for _, val := range list {
-		if val == value {
-			return true
-		}
-	}
-	return false
-}
-
-func initializeIPTables(ipt *iptables.IPTables) (string, error) {
-	// Get existing chains from IPTABLES
-	originaListChain, err := ipt.ListChains("filter")
-	if err != nil {
-		return "error", fmt.Errorf("failed to read iptables: %w", err)
-	}
-
-	// Search for INPUT in IPTABLES
-	chain := "INPUT"
-	if !contains(originaListChain, chain) {
-		return "error", errors.New("iptables does not contain expected INPUT chain")
-	}
-
-	// Search for FORWARD in IPTABLES
-	chain = "FORWARD"
-	if !contains(originaListChain, chain) {
-		return "error", errors.New("iptables does not contain expected FORWARD chain")
-	}
-
-	// Search for chainName in IPTABLES
-	if contains(originaListChain, chainName) {
-		// chainName already exists
-		return "chain exists", nil
-	}
-
-	log.Print("IPTABLES doesn't contain " + chainName + ". Creating now...")
-
-	// Add chain
-	err = ipt.ClearChain("filter", chainName)
-	if err != nil {
-		return "error", fmt.Errorf("failed to clear chain: %w", err)
-	}
-
-	// Add chainName to INPUT
-	err = ipt.Insert("filter", "INPUT", 1, "-j", chainName)
-	if err != nil {
-		return "error", fmt.Errorf("failed to add chain to INPUT chain: %w", err)
-	}
-
-	// Add chain to FORWARD
-	err = ipt.Insert("filter", "FORWARD", 1, "-j", chainName)
-	if err != nil {
-		return "error", fmt.Errorf("failed to add chain to FORWARD chain: %w", err)
-	}
-
-	return chainName + " created", nil
 }
 
 func SshAuthCheck(logfile string) ([]string, int, error) {
@@ -317,86 +322,6 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 	return addresses, linecount, nil
 }
 
-func iptableHandle(proto string, task string, ipvar string) (string, error) {
-	if extraLog {
-		log.Println("iptableHandle:", proto, task, ipvar)
-	}
-
-	var ipProto iptables.Protocol
-	switch proto {
-	case "ipv6":
-		ipProto = iptables.ProtocolIPv6
-	default:
-		ipProto = iptables.ProtocolIPv4
-	}
-
-	// Go connect for IPTABLES
-	ipt, err := iptables.NewWithProtocol(ipProto)
-	if err != nil {
-		log.Println("iptableHandle:", err)
-		return "", err
-	}
-
-	_, err = initializeIPTables(ipt)
-	if err != nil {
-		log.Fatalln("iptableHandler: failed to initialize IPTables:", err)
-		return "", err
-	}
-
-	switch task {
-	case "add":
-		err = ipt.AppendUnique("filter", chainName, "-s", ipvar, "-d", "0/0", "-j", targetChain)
-		if err != nil {
-			log.Println("iptableHandler: error adding address", err)
-			return "", err
-		} else {
-			return "added", nil
-		}
-	case "delete":
-		err = ipt.DeleteIfExists("filter", chainName, "-s", ipvar, "-d", "0/0", "-j", targetChain)
-		if err != nil {
-			log.Println("iptableHandler: error removing address", err)
-			return "", err
-		} else {
-			return "deleted", nil
-		}
-	case "flush":
-		err = ipt.ClearChain("filter", chainName)
-		if err != nil {
-			if extraLog {
-				log.Println("iptableHandler:", proto, err)
-			}
-			return "", err
-		} else {
-			return "flushed", nil
-		}
-	case "push":
-		var exists = false
-		exists, err = ipt.Exists("filter", chainName, "-s", ipvar, "-d", "0/0", "-j", targetChain)
-		if err != nil {
-			log.Println("iptableHandler: error checking if ip already exists", err)
-			return "error checking if ip already exists in the chain", err
-		} else {
-			if exists {
-				err = errors.New("ip already exists")
-				log.Println("iptableHandler: ip already exists", err)
-				return "ip already exists", err
-			} else {
-				err = ipt.Insert("filter", chainName, 1, "-s", ipvar, "-d", "0/0", "-j", targetChain)
-				if err != nil {
-					log.Println("iptableHandler: error pushing address", err)
-					return "", err
-				} else {
-					return "pushed", nil
-				}
-			}
-		}
-	default:
-		log.Println("iptableHandler: unknown task")
-		return "", errors.New("unknown task")
-	}
-}
-
 // LoadConfig attempts to load the configuration file from various locations
 func LoadConfig() (*BHconfig, error) {
 	var fileLocations []string
@@ -436,10 +361,19 @@ func LoadConfig() (*BHconfig, error) {
 	return nil, errors.New("[LoadConfig] failed to locate configuration file " + fileName)
 }
 
-func PrintIPCount(ips []IPAddresses) {
+func PrintIPCount(ips []IPAddressesCount) {
 	log.Println("---------")
 	for ip, count := range ips {
 		log.Println(ip, ":", count)
+	}
+
+	log.Println("---------")
+}
+
+func PrintIP(ips []IPAddresses) {
+	log.Println("---------")
+	for ip := range ips {
+		log.Println(ip)
 	}
 
 	log.Println("---------")
