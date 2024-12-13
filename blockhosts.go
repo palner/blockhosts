@@ -340,7 +340,6 @@ func LoadConfig() (*BHconfig, error) {
 		"/var/lib/blockhosts/"+fileName,
 		"/usr/local/bin/blockhosts/"+fileName,
 		"/usr/local/blockhosts/"+fileName,
-		// "/etc/blockhosts/"+fileName,
 	)
 
 	for _, loc := range fileLocations {
