@@ -194,9 +194,14 @@ func main() {
 
 		updatedLlist = append(updatedLlist, parseList)
 		if count > 2 {
-			log.Println("blocking", address, "with count of", count)
+			if extraLog {
+				log.Println("blocking", address, "with count of", count)
+			}
+
 			if bhipt.Contains(blocked, address) {
-				log.Println(address, "already blocked")
+				if extraLog {
+					log.Println(address, "already blocked")
+				}
 			} else {
 				if bhc.Allowed == nil {
 					bhipt.IptableHandle("ipv4", "add", address, extraLog, chainName, targetChain)
