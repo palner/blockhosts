@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/coreos/go-iptables/iptables"
 )
@@ -20,6 +21,19 @@ func AddIP(list []string, value string) []string {
 
 	list = append(list, value)
 	return list
+}
+
+func BeenAWeek(ts int64) bool {
+	checkTime := time.Unix(ts, 0)
+	timeNow := time.Now()
+	oneWeekAgo := timeNow.AddDate(0, 0, 7)
+
+	if checkTime.Before(oneWeekAgo) {
+		return true
+	}
+
+	return false
+
 }
 
 // Function to see if string within string
@@ -81,6 +95,12 @@ func GetIPaddressesFromChainIPv4(chainName string) ([]string, error) {
 	}
 
 	return ips, nil
+}
+
+func GetTime() int64 {
+	now := time.Now()
+	sec := now.Unix()
+	return sec
 }
 
 func InitializeIPTables(ipt *iptables.IPTables, chainName string) (string, error) {

@@ -76,6 +76,12 @@ type IPAddressesCount struct {
 	Count int    `json:"count"`
 }
 
+type IPAddressesCountTime struct {
+	Ip        string `json:"ip"`
+	Count     int    `json:"count"`
+	TimeStamp int64  `json:"timestamp"`
+}
+
 type IPAddresses struct {
 	Ip string `json:"ip"`
 }
@@ -276,6 +282,7 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 	matchRules = append(matchRules, `authentication failure(.*)rhost\=([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Failed password for(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Invalid user(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
+	matchRules = append(matchRules, `Disconnected from invalid(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchString := strings.Join(matchRules, "|")
 
 	file, err := os.Open(logfile)
