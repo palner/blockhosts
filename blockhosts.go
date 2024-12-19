@@ -66,8 +66,8 @@ var (
 type BHconfig struct {
 	LastLineRead int `json:"last_line,omitempty"`
 	Allowed      []IPNet
-	Blocked      []IPAddresses
-	Watching     []IPAddressesCount
+	Blocked      []IPAddressesTime
+	Watching     []IPAddressesCountTime
 	sourceFile   string
 }
 
@@ -79,6 +79,11 @@ type IPAddressesCount struct {
 type IPAddressesCountTime struct {
 	Ip        string `json:"ip"`
 	Count     int    `json:"count"`
+	TimeStamp int64  `json:"timestamp"`
+}
+
+type IPAddressesTime struct {
+	Ip        string `json:"ip"`
 	TimeStamp int64  `json:"timestamp"`
 }
 
@@ -138,6 +143,7 @@ func main() {
 	}
 
 	// get current blocked
+	var runningBlocks []IPAddressesTime
 	blocked, _ := bhipt.GetIPaddressesFromChainIPv4(chainName)
 	if blocked == nil {
 		log.Println("no blocks in", chainName)
@@ -145,10 +151,34 @@ func main() {
 		if bhc.Blocked == nil {
 			log.Println("no blocks in cfg")
 		} else {
-			log.Println("add cfg blocks to iptables")
+			log.Println("sync cfg blocks to iptables")
 			for _, v := range bhc.Blocked {
-				bhipt.IptableHandle("ipv4", "add", v.Ip, extraLog, chainName, targetChain)
-				blocked = append(blocked, v.Ip)
+				if bhipt.BeenAWeek(v.TimeStamp) {
+					bhipt.IptableHandle("ipv4", "delete", v.Ip, extraLog, chainName, targetChain)
+				} else {
+					bhipt.IptableHandle("ipv4", "add", v.Ip, extraLog, chainName, targetChain)
+					blocked = append(blocked, v.Ip)
+					parseList := IPAddressesTime{
+						Ip:        v.Ip,
+						TimeStamp: v.TimeStamp,
+					}
+
+					runningBlocks = append(runningBlocks, parseList)
+				}
+			}
+		}
+	} else {
+		for _, v := range bhc.Blocked {
+			if bhipt.BeenAWeek(v.TimeStamp) {
+				bhipt.IptableHandle("ipv4", "delete", v.Ip, extraLog, chainName, targetChain)
+				blocked = bhipt.RemoveElement(v.Ip, blocked)
+			} else {
+				parseList := IPAddressesTime{
+					Ip:        v.Ip,
+					TimeStamp: v.TimeStamp,
+				}
+
+				runningBlocks = append(runningBlocks, parseList)
 			}
 		}
 	}
@@ -254,7 +284,7 @@ func main() {
 }
 
 func updateBlocklist(list []string) []IPAddresses {
-	var updatedBlocklist []IPAddresses
+	var updatedBlocklist []IPAddressesTime
 	for _, v := range list {
 		parseList := IPAddresses{
 			Ip: v,

@@ -231,3 +231,12 @@ func IptableHandle(proto string, task string, ipvar string, extraLog bool, chain
 		return "", errors.New("unknown task")
 	}
 }
+
+func RemoveElement(element string, array []string) []string {
+	for i, v := range array {
+		if v == element {
+			return append(array[:i], array[i+1:]...)
+		}
+	}
+	return array
+}
