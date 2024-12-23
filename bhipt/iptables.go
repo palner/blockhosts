@@ -26,7 +26,7 @@ func AddIP(list []string, value string) []string {
 func BeenAWeek(ts int64) bool {
 	checkTime := time.Unix(ts, 0)
 	timeNow := time.Now()
-	oneWeekAgo := timeNow.AddDate(0, 0, 7)
+	oneWeekAgo := timeNow.AddDate(0, 0, -7)
 
 	if checkTime.Before(oneWeekAgo) {
 		return true

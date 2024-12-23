@@ -66,8 +66,8 @@ var (
 type BHconfig struct {
 	LastLineRead int `json:"last_line,omitempty"`
 	Allowed      []IPNet
-	Blocked      []IPAddresses
-	Watching     []IPAddressesCount
+	Blocked      []IPAddressesTime
+	Watching     []IPAddressesCountTime
 	sourceFile   string
 }
 
@@ -84,6 +84,11 @@ type IPAddressesCountTime struct {
 
 type IPAddresses struct {
 	Ip string `json:"ip"`
+}
+
+type IPAddressesTime struct {
+	Ip        string `json:"ip"`
+	TimeStamp int64  `json:"timestamp"`
 }
 
 type IPNet struct {
@@ -138,6 +143,8 @@ func main() {
 	}
 
 	// get current blocked
+	nowTimeStamp := bhipt.GetTime()
+	var newBlockList []IPAddressesTime
 	blocked, _ := bhipt.GetIPaddressesFromChainIPv4(chainName)
 	if blocked == nil {
 		log.Println("no blocks in", chainName)
@@ -147,14 +154,51 @@ func main() {
 		} else {
 			log.Println("add cfg blocks to iptables")
 			for _, v := range bhc.Blocked {
-				bhipt.IptableHandle("ipv4", "add", v.Ip, extraLog, chainName, targetChain)
-				blocked = append(blocked, v.Ip)
+				if !bhipt.BeenAWeek(v.TimeStamp) {
+					bhipt.IptableHandle("ipv4", "add", v.Ip, extraLog, chainName, targetChain)
+					tempBlocked := IPAddressesTime{
+						Ip:        v.Ip,
+						TimeStamp: v.TimeStamp,
+					}
+
+					newBlockList = append(newBlockList, tempBlocked)
+					blocked = append(blocked, v.Ip)
+				}
 			}
 		}
-	}
+	} else {
+		if extraLog {
+			log.Println(blocked)
+		}
 
-	if extraLog {
-		log.Println(blocked)
+		if bhc.Blocked == nil {
+			log.Println("config blocklist is nil, but there are blocks in IPTABLES")
+			for _, ipvalue := range blocked {
+				tempBlocked := IPAddressesTime{
+					Ip:        ipvalue,
+					TimeStamp: nowTimeStamp,
+				}
+
+				newBlockList = append(newBlockList, tempBlocked)
+			}
+		} else {
+			log.Println("check for old blocks")
+			for _, v := range bhc.Blocked {
+				if bhipt.BeenAWeek(v.TimeStamp) {
+					if bhipt.Contains(blocked, v.Ip) {
+						log.Println("removing week old ip", v.Ip, "from iptables")
+						bhipt.IptableHandle("ipv4", "delete", v.Ip, extraLog, chainName, targetChain)
+					}
+				} else {
+					tempBlocked := IPAddressesTime{
+						Ip:        v.Ip,
+						TimeStamp: v.TimeStamp,
+					}
+
+					newBlockList = append(newBlockList, tempBlocked)
+				}
+			}
+		}
 	}
 
 	var ips []string
@@ -166,7 +210,7 @@ func main() {
 
 	if ips == nil {
 		log.Println("no new ips found. lines read:", bhc.LastLineRead)
-		bhc.Blocked = updateBlocklist(blocked)
+		bhc.Blocked = updateBlocklist(newBlockList)
 		if err := bhc.Update(); err != nil {
 			log.Fatal(err)
 		}
@@ -175,27 +219,26 @@ func main() {
 	}
 
 	for _, t := range bhc.Watching {
-		ipaddress := t.Ip
-		count := t.Count
-
-		for i := 0; i <= count; i++ {
-			ips = append(ips, ipaddress)
+		for i := 0; i <= t.Count; i++ {
+			if !bhipt.BeenAWeek(t.TimeStamp) {
+				ips = append(ips, t.Ip)
+			}
 		}
 	}
 
 	log.Println("ips found. blocking ips with 3 or more attempts")
-
 	freq := make(map[string]int)
 	for _, ip := range ips {
 		freq[string(ip)] = freq[string(ip)] + 1
 	}
 
 	blockedcount := 0
-	var updatedLlist []IPAddressesCount
+	var updatedLlist []IPAddressesCountTime
 	for address, count := range freq {
-		parseList := IPAddressesCount{
-			Ip:    address,
-			Count: count,
+		parseList := IPAddressesCountTime{
+			Ip:        address,
+			Count:     count,
+			TimeStamp: nowTimeStamp,
 		}
 
 		updatedLlist = append(updatedLlist, parseList)
@@ -211,14 +254,24 @@ func main() {
 			} else {
 				if bhc.Allowed == nil {
 					bhipt.IptableHandle("ipv4", "add", address, extraLog, chainName, targetChain)
-					blocked = append(blocked, address)
+					addBlocked := IPAddressesTime{
+						Ip:        address,
+						TimeStamp: nowTimeStamp,
+					}
+
+					newBlockList = append(newBlockList, addBlocked)
 				} else {
 					for _, v := range bhc.Allowed {
 						if bhipt.ContainsIP(v.Cidr, address) {
 							log.Println(address, "allowed in", v.Cidr, " - not blocking")
 						} else {
 							bhipt.IptableHandle("ipv4", "add", address, extraLog, chainName, targetChain)
-							blocked = append(blocked, address)
+							addBlocked := IPAddressesTime{
+								Ip:        address,
+								TimeStamp: nowTimeStamp,
+							}
+
+							newBlockList = append(newBlockList, addBlocked)
 						}
 					}
 				}
@@ -234,7 +287,7 @@ func main() {
 
 	log.Println("blocking:", blockedcount, "addresses")
 
-	bhc.Blocked = updateBlocklist(blocked)
+	bhc.Blocked = updateBlocklist(newBlockList)
 	if extraLog {
 		log.Println("updated blocklist")
 		PrintIP(bhc.Blocked)
@@ -253,11 +306,12 @@ func main() {
 	log.Println("Done. New line marker:", bhc.LastLineRead)
 }
 
-func updateBlocklist(list []string) []IPAddresses {
-	var updatedBlocklist []IPAddresses
+func updateBlocklist(list []IPAddressesTime) []IPAddressesTime {
+	var updatedBlocklist []IPAddressesTime
 	for _, v := range list {
-		parseList := IPAddresses{
-			Ip: v,
+		parseList := IPAddressesTime{
+			Ip:        v.Ip,
+			TimeStamp: v.TimeStamp,
 		}
 
 		updatedBlocklist = append(updatedBlocklist, parseList)
@@ -372,19 +426,19 @@ func LoadConfig() (*BHconfig, error) {
 	return nil, errors.New("[LoadConfig] failed to locate configuration file " + fileName)
 }
 
-func PrintIPCount(ips []IPAddressesCount) {
+func PrintIPCount(ips []IPAddressesCountTime) {
 	log.Println("---------")
-	for ip, count := range ips {
-		log.Println(ip, ":", count)
+	for _, v := range ips {
+		log.Println(v.Ip, ":", v.Count)
 	}
 
 	log.Println("---------")
 }
 
-func PrintIP(ips []IPAddresses) {
+func PrintIP(ips []IPAddressesTime) {
 	log.Println("---------")
-	for ip := range ips {
-		log.Println(ip)
+	for _, ip := range ips {
+		log.Println(ip.Ip)
 	}
 
 	log.Println("---------")
