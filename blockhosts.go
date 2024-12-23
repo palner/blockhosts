@@ -68,6 +68,8 @@ type BHconfig struct {
 	Allowed      []IPNet
 	Blocked      []IPAddressesTime
 	Watching     []IPAddressesCountTime
+	Blocked      []IPAddressesTime
+	Watching     []IPAddressesCountTime
 	sourceFile   string
 }
 
@@ -152,7 +154,7 @@ func main() {
 		if bhc.Blocked == nil {
 			log.Println("no blocks in cfg")
 		} else {
-			log.Println("add cfg blocks to iptables")
+			log.Println("sync cfg blocks to iptables")
 			for _, v := range bhc.Blocked {
 				if !bhipt.BeenAWeek(v.TimeStamp) {
 					bhipt.IptableHandle("ipv4", "add", v.Ip, extraLog, chainName, targetChain)
