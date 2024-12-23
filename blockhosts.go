@@ -68,8 +68,6 @@ type BHconfig struct {
 	Allowed      []IPNet
 	Blocked      []IPAddressesTime
 	Watching     []IPAddressesCountTime
-	Blocked      []IPAddressesTime
-	Watching     []IPAddressesCountTime
 	sourceFile   string
 }
 
