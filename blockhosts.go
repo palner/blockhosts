@@ -147,22 +147,25 @@ func main() {
 	var newBlockList []IPAddressesTime
 	blocked, _ := bhipt.GetIPaddressesFromChainIPv4(chainName)
 	if blocked == nil {
-		log.Println("no blocks in", chainName)
-		log.Println("nothing blocking in", chainName, "checking config")
+		log.Println("nothing blocked in", chainName, "checking config")
 		if bhc.Blocked == nil {
-			log.Println("no blocks in cfg")
+			log.Println("no blocks listed in cfg either")
 		} else {
 			log.Println("sync cfg blocks to iptables")
 			for _, v := range bhc.Blocked {
 				if !bhipt.BeenAWeek(v.TimeStamp) {
 					bhipt.IptableHandle("ipv4", "add", v.Ip, extraLog, chainName, targetChain)
-					tempBlocked := IPAddressesTime{
-						Ip:        v.Ip,
-						TimeStamp: v.TimeStamp,
-					}
+					if !ContainsIPAddressesTime(newBlockList, v.Ip) {
+						tempBlocked := IPAddressesTime{
+							Ip:        v.Ip,
+							TimeStamp: v.TimeStamp,
+						}
 
-					newBlockList = append(newBlockList, tempBlocked)
-					blocked = append(blocked, v.Ip)
+						newBlockList = append(newBlockList, tempBlocked)
+						blocked = append(blocked, v.Ip)
+					}
+				} else {
+					log.Println("not blocking", v.Ip, "- too old")
 				}
 			}
 		}
@@ -174,12 +177,14 @@ func main() {
 		if bhc.Blocked == nil {
 			log.Println("config blocklist is nil, but there are blocks in IPTABLES")
 			for _, ipvalue := range blocked {
-				tempBlocked := IPAddressesTime{
-					Ip:        ipvalue,
-					TimeStamp: nowTimeStamp,
-				}
+				if !ContainsIPAddressesTime(newBlockList, ipvalue) {
+					tempBlocked := IPAddressesTime{
+						Ip:        ipvalue,
+						TimeStamp: nowTimeStamp,
+					}
 
-				newBlockList = append(newBlockList, tempBlocked)
+					newBlockList = append(newBlockList, tempBlocked)
+				}
 			}
 		} else {
 			log.Println("check for old blocks")
@@ -190,12 +195,14 @@ func main() {
 						bhipt.IptableHandle("ipv4", "delete", v.Ip, extraLog, chainName, targetChain)
 					}
 				} else {
-					tempBlocked := IPAddressesTime{
-						Ip:        v.Ip,
-						TimeStamp: v.TimeStamp,
-					}
+					if !ContainsIPAddressesTime(newBlockList, v.Ip) {
+						tempBlocked := IPAddressesTime{
+							Ip:        v.Ip,
+							TimeStamp: v.TimeStamp,
+						}
 
-					newBlockList = append(newBlockList, tempBlocked)
+						newBlockList = append(newBlockList, tempBlocked)
+					}
 				}
 			}
 		}
@@ -254,24 +261,30 @@ func main() {
 			} else {
 				if bhc.Allowed == nil {
 					bhipt.IptableHandle("ipv4", "add", address, extraLog, chainName, targetChain)
-					addBlocked := IPAddressesTime{
-						Ip:        address,
-						TimeStamp: nowTimeStamp,
-					}
+					if !ContainsIPAddressesTime(newBlockList, address) {
 
-					newBlockList = append(newBlockList, addBlocked)
+						addBlocked := IPAddressesTime{
+							Ip:        address,
+							TimeStamp: nowTimeStamp,
+						}
+
+						newBlockList = append(newBlockList, addBlocked)
+					}
 				} else {
 					for _, v := range bhc.Allowed {
 						if bhipt.ContainsIP(v.Cidr, address) {
 							log.Println(address, "allowed in", v.Cidr, " - not blocking")
 						} else {
 							bhipt.IptableHandle("ipv4", "add", address, extraLog, chainName, targetChain)
-							addBlocked := IPAddressesTime{
-								Ip:        address,
-								TimeStamp: nowTimeStamp,
-							}
+							if !ContainsIPAddressesTime(newBlockList, address) {
 
-							newBlockList = append(newBlockList, addBlocked)
+								addBlocked := IPAddressesTime{
+									Ip:        address,
+									TimeStamp: nowTimeStamp,
+								}
+
+								newBlockList = append(newBlockList, addBlocked)
+							}
 						}
 					}
 				}
@@ -467,6 +480,17 @@ func CountLines(r io.Reader) (int, error) {
 	}
 
 	return count, err
+}
+
+// Function to see if string within string
+func ContainsIPAddressesTime(list []IPAddressesTime, value string) bool {
+	for _, val := range list {
+		if val.Ip == value {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (cfg *BHconfig) Update() error {
