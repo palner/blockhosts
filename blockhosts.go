@@ -208,6 +208,19 @@ func main() {
 		}
 	}
 
+	var updateWatchlist []IPAddressesCountTime
+	for _, t := range bhc.Watching {
+		if !bhipt.BeenAWeek(t.TimeStamp) {
+			tempWatch := IPAddressesCountTime{
+				Ip:        t.Ip,
+				TimeStamp: t.TimeStamp,
+				Count:     t.Count,
+			}
+
+			updateWatchlist = append(updateWatchlist, tempWatch)
+		}
+	}
+
 	var ips []string
 	ips, bhc.LastLineRead, err = SshAuthCheck(sshLog)
 	if err != nil {
@@ -225,14 +238,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	for _, t := range bhc.Watching {
-		for i := 0; i <= t.Count; i++ {
-			if !bhipt.BeenAWeek(t.TimeStamp) {
-				ips = append(ips, t.Ip)
-			}
-		}
-	}
-
 	log.Println("ips found. blocking ips with 3 or more attempts")
 	freq := make(map[string]int)
 	for _, ip := range ips {
@@ -242,13 +247,19 @@ func main() {
 	blockedcount := 0
 	var updatedLlist []IPAddressesCountTime
 	for address, count := range freq {
-		parseList := IPAddressesCountTime{
-			Ip:        address,
-			Count:     count,
-			TimeStamp: nowTimeStamp,
+		if !ContainsIPAddressesCountTime(updateWatchlist, address) {
+			parseList := IPAddressesCountTime{
+				Ip:        address,
+				Count:     count,
+				TimeStamp: nowTimeStamp,
+			}	
+
+			updateWatchlist = append(updateWatchlist, parseList)
+		} else {
+			for i, val := range updateWatchlist {
+				if 
 		}
 
-		updatedLlist = append(updatedLlist, parseList)
 		if count > 2 {
 			if extraLog {
 				log.Println("blocking", address, "with count of", count)
@@ -346,10 +357,12 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 	var matchRules []string
 	matchRules = append(matchRules, `Connection closed by\D+([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Received disconnect from\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\:\s\s\[preauth\]`)
+	matchRules = append(matchRules, `Received disconnect from\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)Bye Bye [preauth\]`)
 	matchRules = append(matchRules, `authentication failure(.*)rhost\=([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Failed password for(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Invalid user(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Disconnected from invalid(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
+	matchRules = append(matchRules, `Disconnected from authenticating user(.*)([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
 	matchString := strings.Join(matchRules, "|")
 
 	file, err := os.Open(logfile)
@@ -484,6 +497,16 @@ func CountLines(r io.Reader) (int, error) {
 
 // Function to see if string within string
 func ContainsIPAddressesTime(list []IPAddressesTime, value string) bool {
+	for _, val := range list {
+		if val.Ip == value {
+			return true
+		}
+	}
+
+	return false
+}
+
+func ContainsIPAddressesCountTime(list []IPAddressesCountTime, value string) bool {
 	for _, val := range list {
 		if val.Ip == value {
 			return true
