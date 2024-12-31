@@ -46,6 +46,7 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 
 	"blockhosts/bhipt"
@@ -524,6 +525,14 @@ func (cfg *BHconfig) Update() error {
 	}
 
 	defer f.Close()
+
+	sort.Slice(bhc.Blocked, func(i, j int) bool {
+		return bhc.Blocked[i].TimeStamp < bhc.Blocked[j].TimeStamp
+	})
+
+	sort.Slice(bhc.Watching, func(i, j int) bool {
+		return bhc.Watching[i].TimeStamp < bhc.Watching[j].TimeStamp
+	})
 
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "\t")
