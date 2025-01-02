@@ -10,6 +10,12 @@ Log parser / blocker using Golang and IPtables.
 4. Update hosts.deny
 5. Enjoy
 
+You can also do the Super Lazy install of:
+
+`curl -sSL https://raw.githubusercontent.com/palner/blockhosts/refs/heads/main/install_blockhosts.sh | bash`
+
+_If you do the super lazy install, please check the `/etc/hosts.deny` for accuracy as well as adding your IP to `/usr/local/bin/bhconfig.json`._
+
 ## Details
 
 ### Downloading the binary
