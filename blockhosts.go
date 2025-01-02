@@ -261,8 +261,10 @@ func main() {
 	}
 
 	for _, val := range bhc.Watching {
-
 		if val.Count > 2 {
+			var blocktheip bool
+			var allowed bool
+			var alreadyblocked bool
 			if extraLog {
 				log.Println("blocking", val.Ip, "with count of", val.Count)
 			}
@@ -271,38 +273,38 @@ func main() {
 				if extraLog {
 					log.Println(val.Ip, "already blocked")
 				}
+				alreadyblocked = true
 			} else {
 				if bhc.Allowed == nil {
-					bhipt.IptableHandle("ipv4", "add", val.Ip, extraLog, chainName, targetChain)
-					if !ContainsIPAddressesTime(newBlockList, val.Ip) {
-
-						addBlocked := IPAddressesTime{
-							Ip:        val.Ip,
-							TimeStamp: nowTimeStamp,
-						}
-
-						newBlockList = append(newBlockList, addBlocked)
-						blockedcount++
-					}
+					blocktheip = true
 				} else {
 					for _, v := range bhc.Allowed {
 						if bhipt.ContainsIP(v.Cidr, val.Ip) {
 							log.Println(val.Ip, "allowed in", v.Cidr, " - not blocking")
+							allowed = true
 						} else {
-							bhipt.IptableHandle("ipv4", "add", val.Ip, extraLog, chainName, targetChain)
-							if !ContainsIPAddressesTime(newBlockList, val.Ip) {
-
-								addBlocked := IPAddressesTime{
-									Ip:        val.Ip,
-									TimeStamp: nowTimeStamp,
-								}
-
-								newBlockList = append(newBlockList, addBlocked)
-								blockedcount++
+							if !allowed {
+								blocktheip = true
 							}
 						}
 					}
 				}
+			}
+
+			if blocktheip && !allowed {
+				bhipt.IptableHandle("ipv4", "add", val.Ip, extraLog, chainName, targetChain)
+				if !ContainsIPAddressesTime(newBlockList, val.Ip) {
+
+					addBlocked := IPAddressesTime{
+						Ip:        val.Ip,
+						TimeStamp: nowTimeStamp,
+					}
+
+					newBlockList = append(newBlockList, addBlocked)
+					blockedcount++
+				}
+			} else {
+				log.Println("not blocking", val.Ip, "count:", val.Count, "allowed:", allowed, "already blocked:", alreadyblocked)
 			}
 		} else {
 			if extraLog {
@@ -357,14 +359,15 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 	var addresses []string
 	var matchRules []string
 	matchRules = append(matchRules, `Connection closed by\D+([0-9]{0,3}\.){3}[0-9]{0,3}`)
-	matchRules = append(matchRules, `Received disconnect from\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\:\s\s\[preauth\]`)
 	matchRules = append(matchRules, `Received disconnect from\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
 	matchRules = append(matchRules, `Connection reset by\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
 	matchRules = append(matchRules, `authentication failure(.*)rhost\=([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Failed password for(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Invalid user(.*)([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchRules = append(matchRules, `Disconnected from invalid\D+([0-9]{0,3}\.){3}[0-9]{0,3}`)
-	matchRules = append(matchRules, `Disconnected from authenticating user\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
+	matchRules = append(matchRules, `Disconnected from\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
+	matchRules = append(matchRules, `Disconnecting\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
+	matchRules = append(matchRules, `maximum authentication attempts exceeded for\D+([0-9]{0,3}\.){3}[0-9]{0,3}`)
 	matchString := strings.Join(matchRules, "|")
 
 	file, err := os.Open(logfile)
