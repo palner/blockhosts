@@ -61,6 +61,7 @@ var (
 	targetChain string
 	sshLog      string
 	extraLog    bool
+	fullLog     bool
 	bhc         *BHconfig
 )
 
@@ -102,7 +103,7 @@ func init() {
 	flag.StringVar(&logFile, "log", "/var/log/blockhosts.log", "location of log file or - for stdout")
 	flag.StringVar(&sshLog, "ssh", "/var/log/auth.log", "location of ssh log")
 	flag.BoolVar(&extraLog, "xtra", false, "log extra")
-
+	flag.BoolVar(&fullLog, "full", false, "read more than 5000 lines of the log")
 }
 
 func main() {
@@ -379,6 +380,7 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 	defer file.Close()
 	reader := bufio.NewReader(file)
 	linecount := 0
+	parsecount := 0
 	var read = false
 	reader = bufio.NewReader(file)
 	log.Println("parse log")
@@ -393,6 +395,14 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 			break
 		} else if err != nil {
 			return addresses, 0, fmt.Errorf("failed to read file %s: %v\n", logfile, err)
+		}
+
+		if fullLog {
+			if parsecount > 5000 {
+				bhc.LastLineRead = linecount
+				log.Println("stopping at 5000 processed lines. linecount:", linecount)
+				break
+			}
 		}
 
 		if linecount >= bhc.LastLineRead {
@@ -410,6 +420,8 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 					addresses = append(addresses, ipaddress)
 				}
 			}
+
+			parsecount++
 		}
 
 		linecount++
