@@ -48,6 +48,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"blockhosts/bhipt"
 )
@@ -55,7 +56,6 @@ import (
 type Re map[string]*regexp.Regexp
 
 var (
-	APIport     string
 	logFile     string
 	chainName   string
 	targetChain string
@@ -107,6 +107,7 @@ func init() {
 }
 
 func main() {
+	start := time.Now()
 	defer os.Exit(0)
 	flag.Parse()
 	if logFile != "-" && logFile != "stdout" {
@@ -221,6 +222,7 @@ func main() {
 	ips, bhc.LastLineRead, err = SshAuthCheck(sshLog)
 	if err != nil {
 		log.Println("error accessing log:", err)
+		log.Println("elapsed:", GetElapsed(start))
 		runtime.Goexit()
 	}
 
@@ -231,6 +233,7 @@ func main() {
 			log.Fatal(err)
 		}
 
+		log.Println("elapsed:", GetElapsed(start))
 		os.Exit(0)
 	}
 
@@ -332,6 +335,7 @@ func main() {
 	}
 
 	log.Println("Done. New line marker:", bhc.LastLineRead)
+	log.Println("elapsed:", GetElapsed(start))
 }
 
 func updateBlocklist(list []IPAddressesTime) []IPAddressesTime {
@@ -397,7 +401,7 @@ func SshAuthCheck(logfile string) ([]string, int, error) {
 			return addresses, 0, fmt.Errorf("failed to read file %s: %v\n", logfile, err)
 		}
 
-		if fullLog {
+		if !fullLog {
 			if parsecount > 5000 {
 				bhc.LastLineRead = linecount
 				log.Println("stopping at 5000 processed lines. linecount:", linecount)
@@ -531,6 +535,10 @@ func ContainsIPAddressesCountTime(list []IPAddressesCountTime, value string) boo
 	}
 
 	return false
+}
+
+func GetElapsed(start time.Time) time.Duration {
+	return time.Since(start)
 }
 
 func (cfg *BHconfig) Update() error {
