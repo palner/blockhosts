@@ -168,7 +168,9 @@ func main() {
 						blocked = append(blocked, v.Ip)
 					}
 				} else {
-					log.Println("not blocking", v.Ip, "- too old")
+					if extraLog {
+						log.Println("not blocking", v.Ip, "- too old")
+					}
 				}
 			}
 		}
@@ -308,7 +310,9 @@ func main() {
 					blockedcount++
 				}
 			} else {
-				log.Println("not blocking", val.Ip, "count:", val.Count, "allowed:", allowed, "already blocked:", alreadyblocked)
+				if extraLog {
+					log.Println("not blocking", val.Ip, "count:", val.Count, "allowed:", allowed, "already blocked:", alreadyblocked)
+				}
 			}
 		} else {
 			if extraLog {
