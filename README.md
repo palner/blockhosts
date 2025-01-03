@@ -88,6 +88,7 @@ sshd : ALL : allow
 - `chain`: iptables chain name (default is `APIBANLOCAL`) (Note: will be created if it doesn't exist)
 - `log`: log file for output (default is /var/log/blockhosts.log)
 - `xtra`: `true|false`. default false. Used for extra logging
+- `full`: `true|false`. default false. Read full log (vs 5000 line chunks)
 
 Example:
 
