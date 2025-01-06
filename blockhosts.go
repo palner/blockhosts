@@ -367,7 +367,7 @@ func checkIPAddress(ip string) bool {
 func SshAuthCheck(logfile string) ([]string, int, error) {
 	var addresses []string
 	var matchRules []string
-	matchRules = append(matchRules, `Connection closed by\D+([0-9]{0,3}\.){3}[0-9]{0,3}`)
+	matchRules = append(matchRules, `Connection closed by\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
 	matchRules = append(matchRules, `Received disconnect from\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
 	matchRules = append(matchRules, `Connection reset by\D+([0-9]{0,3}\.){3}[0-9]{0,3}(.*)\[preauth\]`)
 	matchRules = append(matchRules, `authentication failure(.*)rhost\=([0-9]{0,3}\.){3}[0-9]{0,3}`)
